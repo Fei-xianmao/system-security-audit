@@ -1,0 +1,106 @@
+# 危险 IAM 权限组合 — 权限提升路径
+#
+# 这些组合基于 AWS IAM 权限提升研究的公开成果，参考:
+#   - Rhino Security Labs: AWS IAM Privilege Escalation Methods
+#   - Bishop Fox: AWS IAM Post-Exploitation
+#   - MITRE ATT&CK Cloud Matrix
+
+combos:
+  - id: COMBO-001
+    name: "直接策略版本提升"
+    severity: CRITICAL
+    permissions:
+      - "iam:CreatePolicyVersion"
+      - "iam:SetDefaultPolicyVersion"
+    description: "攻击者可以创建现有策略的新版本（含 \",\"），并设为默认，将自己提升为管理员。"
+    escalation_path: "低权限用户 → CreatePolicyVersion(管理员策略) → SetDefaultPolicyVersion → 管理员"
+    mitigation: "确保 iam:CreatePolicyVersion 权限不在 IAM 用户范围内，或使用 Permission Boundary 限制"
+
+  - id: COMBO-002
+    name: "EC2 实例后门"
+    severity: CRITICAL
+    permissions:
+      - "iam:PassRole"
+      - "ec2:RunInstances"
+    description: "创建带高权限 IAM Role 的 EC2 实例，通过 IMDS 获取该 Role 的凭证。"
+    escalation_path: "低权限用户 → RunInstances(高权限Role) → IMDS 获取凭证 → 获得 Role 权限"
+    mitigation: "限制 PassRole 的 Resource 范围，添加 iam:PassedToService 条件键"
+
+  - id: COMBO-003
+    name: "Lambda 函数后门"
+    severity: CRITICAL
+    permissions:
+      - "iam:PassRole"
+      - "lambda:CreateFunction"
+      - "lambda:InvokeFunction"
+    description: "创建带高权限执行角色的 Lambda 函数 → 调用该函数 → 在函数环境变量中获取凭证。"
+    escalation_path: "低权限用户 → CreateFunction(高权限Role) → InvokeFunction → 获取 Role 凭证"
+    mitigation: "同上，限制 PassRole"
+
+  - id: COMBO-004
+    name: "附加管理员策略"
+    severity: CRITICAL
+    permissions:
+      - "iam:AttachUserPolicy"
+    description: "将 AdministratorAccess 策略附加到自己的用户。"
+    escalation_path: "低权限用户 → AttachUserPolicy(AdministratorAccess) → 管理员"
+    mitigation: "确保 iam:AttachUserPolicy 不授予普通用户"
+
+  - id: COMBO-005
+    name: "Inline Policy 注入"
+    severity: CRITICAL
+    permissions:
+      - "iam:PutUserPolicy"
+    description: "直接向用户添加通配符 Inline Policy。"
+    escalation_path: "低权限用户 → PutUserPolicy(Action:*, Resource:*) → 管理员"
+    mitigation: "使用 IAM Policy 条件键限制 PutUserPolicy"
+
+  - id: COMBO-006
+    name: "角色信任策略劫持"
+    severity: HIGH
+    permissions:
+      - "iam:UpdateAssumeRolePolicy"
+    description: "修改目标角色的信任策略，允许自己的账户或用户代入。"
+    escalation_path: "修改 Role 信任策略 → sts:AssumeRole → 获取 Role 权限"
+    mitigation: "限制 UpdateAssumeRolePolicy 的使用范围"
+
+  - id: COMBO-007
+    name: "Lambda 代码注入"
+    severity: HIGH
+    permissions:
+      - "lambda:UpdateFunctionCode"
+      - "lambda:InvokeFunction"
+    description: "修改已有 Lambda 函数的代码，注入凭证窃取逻辑。"
+    escalation_path: "UpdateFunctionCode(注入后门) → InvokeFunction → 获取 Lambda Role 凭证"
+    mitigation: "使用 Lambda 代码签名"
+
+  - id: COMBO-008
+    name: "CloudFormation 特权提升"
+    severity: HIGH
+    permissions:
+      - "iam:PassRole"
+      - "cloudformation:CreateStack"
+    description: "创建 CloudFormation 栈，使用高权限 Service Role 执行 —— 在栈模板中定义 IAM 资源。"
+    escalation_path: "CreateStack(AdminServiceRole) → 栈创建 IAM 资源"
+    mitigation: "限制 CloudFormation Service Role 的权限"
+
+  - id: COMBO-009
+    name: "创建后门 Access Key"
+    severity: MEDIUM
+    permissions:
+      - "iam:CreateAccessKey"
+      - "iam:ListUsers"
+    description: "为任意 IAM 用户创建新的 Access Key，获取该用户的权限。"
+    escalation_path: "ListUsers → 发现高权限用户 → CreateAccessKey → 使用新密钥"
+    mitigation: "限制 iam:CreateAccessKey 的使用范围"
+
+  - id: COMBO-010
+    name: "ECS 任务执行"
+    severity: MEDIUM
+    permissions:
+      - "iam:PassRole"
+      - "ecs:RegisterTaskDefinition"
+      - "ecs:RunTask"
+    description: "定义并运行 ECS 任务，传递高权限 Task Role。"
+    escalation_path: "RegisterTaskDefinition → RunTask(高权限Role) → ECS 容器内获取凭证"
+    mitigation: "限制 PassRole 范围"

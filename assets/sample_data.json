@@ -1,0 +1,106 @@
+{
+  "project": {
+    "app_name": "富小城 · 活动中心小程序",
+    "app_id": "wx****************",
+    "version": "V2.3.0",
+    "category": "生活服务 / 活动预约",
+    "test_date": "2026-11-22",
+    "environment": "测试环境 + 生产镜像（脱敏数据）",
+    "team": "信息安全部 · 应用安全测试组",
+    "scope": "登录鉴权、预约与票码、券与权益、核销工作台、抽奖互动、用户中心、后台配置接口，共 42 个接口、18 个页面",
+    "out_of_scope": "微信平台自身能力、第三方支付通道内部逻辑、已由甲方另行测试的等保基础设施",
+    "method": "黑盒为主 + 白盒代码审计辅助；自动化扫描打底 + 人工渗透与业务逻辑推演",
+    "standards": "《网络安全法》《个人信息保护法》、GB/T 22239-2019（等保2.0）、GB/T 35273-2020、OWASP Top 10、OWASP MASVS、微信小程序平台运营规范"
+  },
+  "summary": {
+    "critical": 1, "high": 2, "medium": 3, "low": 2,
+    "conclusion": "本次检测共发现漏洞 8 项，其中严重 1 项、高危 2 项。严重与高危漏洞均可被外部直接利用，存在数据泄露与权益被滥用的实际风险。",
+    "go_live": "暂不建议上线。须在修复全部严重与高危漏洞并完成复测通过后，方可提交审核上线；中低危漏洞应制定计划限期修复。"
+  },
+  "findings": [
+    {
+      "id": "SEC-001", "name": "核销接口存在水平越权，可核销他人票码", "severity": "严重",
+      "cvss": "9.1", "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:N",
+      "location": "POST /activity/verify/ticket ；核销工作台 verify.js verifyTicket()",
+      "description": "核销接口仅校验工作人员身份，未校验该工作人员所属活动与票码所属活动的一致性，也未校验票码归属。攻击者（低权限工作人员）遍历 ticket_id 即可跨活动核销任意票码。",
+      "reproduce": ["使用A活动工作人员账号登录核销工作台", "抓包获取核销请求，将 ticket_id 替换为B活动的有效票码ID", "重放请求，返回核销成功，B活动票码被失效"],
+      "evidence": "见附录截图 E-01（请求包与响应包）",
+      "impact": "可直接导致他人活动权益被冒用核销，造成活动秩序混乱与用户投诉；结合票码可预测，可批量核销。",
+      "recommendation": "服务端在核销前校验：①票码所属活动 ∈ 该工作人员被授权活动列表；②票码处于有效状态且在有效时间窗内；③写入核销记录时记录操作者与归属活动。权限校验必须落在服务端，不依赖前端隐藏入口。"
+    },
+    {
+      "id": "SEC-002", "name": "前端硬编码 AppSecret，可伪造任意用户登录态", "severity": "严重",
+      "cvss": "9.8", "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "location": "反编译源码 app-service.js 第 128 行；config.js",
+      "description": "反编译 .wxapkg 后在前端配置中发现明文 appsecret 与 AES 密钥。攻击者可据此调用 code2session 换取任意 session_key，伪造登录态。",
+      "reproduce": ["使用 KillWxapkg 反编译小程序包", "在 app-service.js 搜索 'secret' 找到硬编码值", "在服务端接口模拟签发登录态，成功以任意 openid 访问用户数据"],
+      "evidence": "见附录截图 E-02（反编译代码片段）",
+      "impact": "appsecret 泄露等于交出小程序身份凭证，可导致全量用户数据泄露与身份伪造。",
+      "recommendation": "立即在微信公众平台重置 AppSecret；密钥仅存服务端环境变量/密钥管理服务，通过带鉴权的接口动态下发会话凭证；前端不得出现任何长期密钥，采用 code2session 在服务端完成会话管理。"
+    },
+    {
+      "id": "SEC-003", "name": "优惠券可重复核销（并发超发）", "severity": "高危",
+      "cvss": "8.1", "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:N",
+      "location": "POST /coupon/redeem",
+      "description": "券核销未加分布式锁与状态 CAS 校验，并发请求下同一张券可被多次核销。",
+      "reproduce": ["领取一张单次券", "用脚本并发 20 次提交同一 coupon_id 的核销请求", "后端返回多次成功，券被重复抵扣"],
+      "evidence": "见附录截图 E-03（并发请求与响应）",
+      "impact": "造成营销成本损失与对账异常。",
+      "recommendation": "核销使用事务 + 状态机 CAS（仅 status=未使用 可流转），加分布式锁或唯一约束防重；幂等键由服务端生成。"
+    },
+    {
+      "id": "SEC-004", "name": "手机号与身份证号明文传输与存储", "severity": "高危",
+      "cvss": "7.5", "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "location": "用户资料接口 /user/profile；数据库 user 表",
+      "description": "部分接口虽走 HTTPS，但敏感字段未做字段级加密，日志记录完整手机号与身份证号，展示未脱敏。",
+      "reproduce": ["抓包查看 /user/profile 响应，手机号与身份证号明文返回", "查看运维日志，检索到完整敏感信息"],
+      "evidence": "见附录截图 E-04",
+      "impact": "违反《个人信息保护法》第51条，存在合规处罚与数据泄露风险。",
+      "recommendation": "敏感字段加密存储、日志脱敏、前端展示掩码（如 138****5678）；最小必要返回字段。"
+    },
+    {
+      "id": "SEC-005", "name": "短信验证码接口缺少频率限制", "severity": "中危",
+      "cvss": "5.3", "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+      "location": "POST /sms/send",
+      "description": "未对单手机号/单IP做发送频率限制，可被用于短信轰炸与验证码爆破。",
+      "reproduce": ["脚本循环调用发送接口 100 次", "同一手机号收到大量短信，服务端无限流"],
+      "evidence": "见附录截图 E-05",
+      "impact": "骚扰用户、增加成本、为爆破提供条件。",
+      "recommendation": "按手机号+IP+设备指纹做令牌桶限流，验证码设置有效期与尝试次数上限。"
+    },
+    {
+      "id": "SEC-006", "name": "预约时段可被脚本恶意占满", "severity": "中危",
+      "cvss": "5.9", "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:H",
+      "location": "POST /activity/booking",
+      "description": "预约未限制单用户可预约数量与未支付占用时长，攻击者可批量占满活动时段。",
+      "reproduce": ["并发提交多个不同 usersession 的预约请求", "未支付时段被长期占用，正常用户无法预约"],
+      "evidence": "见附录截图 E-06",
+      "impact": "活动可用性受损，影响真实用户体验。",
+      "recommendation": "限制单活动时间窗内单用户预约数量，未支付预约设置超时释放，关键时段加人机校验。"
+    },
+    {
+      "id": "SEC-007", "name": "用户隐私保护指引与实际调用不一致", "severity": "中危",
+      "cvss": "4.3", "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N",
+      "location": "微信公众平台《用户隐私保护指引》配置",
+      "description": "代码调用了相册写入与位置信息接口，但隐私指引未声明对应类型与用途，首次启动未弹窗明示。",
+      "reproduce": ["反编译统计隐私接口调用", "与后台隐私指引声明逐项比对，发现 2 项未声明"],
+      "evidence": "见附录截图 E-07",
+      "impact": "版本审核驳回风险，严重时关键能力（位置、相册）被平台封禁。",
+      "recommendation": "按实际调用补全隐私指引声明并写明用途，接入 wx.requirePrivacyAuthorize 弹窗，用户同意后再调用。"
+    },
+    {
+      "id": "SEC-008", "name": "错误堆栈与调试开关泄露", "severity": "低危",
+      "cvss": "3.1", "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+      "location": "多处接口错误响应；前端 vConsole",
+      "description": "生产环境异常响应返回完整堆栈与内部路径，前端保留 vConsole 调试入口。",
+      "reproduce": ["构造异常参数触发 500", "响应体包含文件路径与框架版本"],
+      "evidence": "见附录截图 E-08",
+      "impact": "泄露内部信息，辅助攻击者测绘。",
+      "recommendation": "生产环境关闭调试输出与 vConsole，统一错误响应模板，记录日志但前端不返回堆栈。"
+    }
+  ],
+  "retest": {
+    "date": "待复测",
+    "result": "开发方完成严重与高危漏洞修复后，由测试方执行回归验证并出具复测结论。当前尚未复测。"
+  }
+}

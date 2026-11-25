@@ -1,0 +1,17 @@
+{
+  "company_name": "【公司名称】",
+  "department": "【安全部门名称】",
+  "report_title": "系统上线安全检测和安全措施有效性验证报告",
+  "report_prefix": "SEC",
+  "version": "V2.0",
+  "confidentiality": "内部资料 注意保管",
+  "contact_name": "【联系人】",
+  "contact_phone": "",
+  "contact_email": "",
+  "pipeline": {
+    "doc_format": "所有 Word 文档由 Markdown 模板经 scripts/md2docx_convert.py 生成（参考 assets/reference.docx：多级编号、GB/T 9704 字体、网格/三线表样式）",
+    "templates_dir": "assets/templates",
+    "project_archive_root": "./projects"
+  },
+  "note": "报告/方案/授权书/复测报告均基于统一版式生成。若为正式验收/等保/上架用途，须由具备 CNAS/CMA 资质的第三方机构出具并盖章。云暴露面工具 scripts/cloud 源自 cloud-vuln-skill（AGPLv3，保留 LICENSE），仅限授权测试使用。"
+}
